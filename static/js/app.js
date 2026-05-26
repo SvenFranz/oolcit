@@ -918,26 +918,42 @@ async function nextSample() {
 
     stopPlayback();
     showLogoOnly();
-    setStartButtonToStart();
+    setInfo(" ");
 
     try {
         dom.startButton.disabled = true;
         dom.nextButton.disabled = true;
         dom.solutionButton.disabled = true;
 
+        /*
+         * Nächstes Sample vom Backend holen.
+         */
         const sample = await loadNextSample();
 
         if (!sample) {
             return;
         }
 
-        enableSampleLoadedButNotPlayed();
+        /*
+         * Wichtig:
+         * Bei "Weiter" soll das neue Signal direkt einmal abgespielt werden.
+         */
+        await playSample(sample);
+
+        state.currentSample = sample;
+        state.currentSampleWasPlayed = true;
+        state.solutionVisible = false;
+
+        /*
+         * Nach dem direkten Abspielen bleibt der Button korrekt auf "Wiederholen".
+         */
+        enableAfterPlayback();
 
         setInfo(" ");
     } catch (error) {
         /*
-         * Falls beim Laden des nächsten Samples etwas schiefgeht,
-         * darf das aktuelle Sample weiterhin wiederholt werden.
+         * Falls beim Laden oder Abspielen etwas schiefgeht,
+         * bleibt der letzte sinnvolle Zustand erhalten.
          */
         if (state.currentSample) {
             enableAfterPlayback();
