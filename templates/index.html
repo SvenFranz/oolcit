@@ -6,10 +6,10 @@
     <title>{{ title }}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}?v=1">
-    <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/favicon.png') }}?v=1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}?v=4">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/favicon.png') }}?v=4">
 
-    <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/favicon.png') }}?v=1">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/favicon.png') }}?v=4">
 </head>
 
 <body>
@@ -22,7 +22,7 @@
         <section class="trainer-grid">
             <!-- Linke Spalte -->
             <aside class="left-column">
-                <fieldset class="panel-box">
+                <fieldset class="panel-box voice-box">
                     <legend>Stimme</legend>
 
                     <label>
@@ -36,7 +36,7 @@
                     </label>
                 </fieldset>
 
-                <fieldset class="panel-box">
+                <fieldset class="panel-box volume-box">
                     <legend>Lautstärke</legend>
 
                     <input id="volumeSlider" type="range" min="1" max="100" step="1" value="50">
@@ -70,7 +70,7 @@
                     <button id="solutionButton" disabled>Lösung</button>
                 </nav>
 
-                <fieldset class="panel-box">
+                <fieldset class="panel-box font-size-box">
                     <legend>Schriftgröße der Lösung</legend>
 
                     <input id="fontSizeSlider" type="range" min="12" max="50" step="1" value="24">
@@ -80,7 +80,7 @@
 
             <!-- Rechte Spalte -->
             <aside class="right-column">
-                <fieldset id="noiseOptions" class="panel-box">
+                <fieldset id="noiseOptions" class="panel-box noise-box">
                     <legend>Störgeräusch</legend>
 
                     <div id="noiseTypeList" class="noise-type-list">
@@ -88,7 +88,7 @@
                     </div>
                 </fieldset>
 
-                <fieldset id="difficultyBox" class="panel-box" disabled>
+                <fieldset id="difficultyBox" class="panel-box difficulty-box" disabled>
                     <legend>Schwierigkeit</legend>
 
                     <input id="difficultySlider" type="range" min="-12" max="0" step="2" value="-6">
@@ -101,7 +101,8 @@
         <footer class="footer">
             Copyright 2026, Sven Franz, Jade Hochschule Wilhelmshaven/Oldenburg/Elsfleth
             <p class="cookie-notice">
-                Der Quellcode basiert auf dem Projekt "OLCIT – Oldenburger CI-Trainer" von Michael Thiermann, Jan Willhaus an der Jade Hochschule Wilhelmshaven/Oldenburg/Elsfleth.<br>
+                Der Quellcode basiert auf dem Projekt "OLCIT – Oldenburger CI-Trainer" von Michael Thiermann, Jan
+                Willhaus an der Jade Hochschule Wilhelmshaven/Oldenburg/Elsfleth.<br>
                 Hinweis: Diese Anwendung speichert lokale Einstellungen wie Stimme,
                 Lautstärke, Liste, Störgeräusch und Schwierigkeit in Cookies,
                 um sie beim nächsten Besuch wiederherzustellen.
