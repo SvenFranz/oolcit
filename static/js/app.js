@@ -3,11 +3,25 @@
 const NOISE_PRE_ROLL_SECONDS = 1.0;
 const NOISE_POST_ROLL_SECONDS = 1.0;
 const NO_NOISE_PAUSE_FACTOR = 0.5;
+
 const MIN_SPEECH_VOLUME_PERCENT = 1;
-const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 const DEFAULT_SPEECH_VOLUME_PERCENT = 50;
 const DEFAULT_DIFFICULTY_DB = -6;
+
+const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
+
 const NOISE_FADE_WINDOW_MS = 50;
+
+const START_BUTTON_TEXT = "Start";
+const REPEAT_BUTTON_TEXT = "Wiederholen";
+
+const PREF_COOKIE_NAMES = {
+    voice: "olcit_voice",
+    volume: "olcit_volume",
+    list: "olcit_list",
+    noise: "olcit_noise",
+    difficulty: "olcit_difficulty",
+};
 
 /* ==========================================================================
    Zustand
@@ -18,20 +32,12 @@ const state = {
     activeSources: [],
 
     currentSample: null,
-    hasStarted: false,
+    currentSampleWasPlayed: false,
     solutionVisible: false,
 
     availableLists: [],
     availableNoises: [],
     noiseUrls: {},
-};
-
-const PREF_COOKIE_NAMES = {
-    voice: "olcit_voice",
-    volume: "olcit_volume",
-    list: "olcit_list",
-    noise: "olcit_noise",
-    difficulty: "olcit_difficulty",
 };
 
 /* ==========================================================================
@@ -60,7 +66,6 @@ const dom = {
 
     fontSizeSlider: document.getElementById("fontSizeSlider"),
 };
-
 
 /* ==========================================================================
    Allgemeine Hilfsfunktionen
@@ -106,7 +111,7 @@ function volumePercent() {
         return MIN_SPEECH_VOLUME_PERCENT;
     }
 
-    return Math.max(value, MIN_SPEECH_VOLUME_PERCENT);
+    return Math.min(Math.max(value, MIN_SPEECH_VOLUME_PERCENT), 100);
 }
 
 
@@ -135,10 +140,6 @@ function showSolutionText(text) {
 }
 
 
-function clearSolution() {
-    showLogoOnly();
-}
-
 function randomNoiseOffset(bufferDuration, requiredDuration) {
     if (bufferDuration <= 0) {
         return 0;
@@ -159,6 +160,21 @@ function randomNoiseOffset(bufferDuration, requiredDuration) {
      */
     return Math.random() * bufferDuration;
 }
+
+
+function setStartButtonToStart() {
+    dom.startButton.textContent = START_BUTTON_TEXT;
+}
+
+
+function setStartButtonToRepeat() {
+    dom.startButton.textContent = REPEAT_BUTTON_TEXT;
+}
+
+
+/* ==========================================================================
+   Cookies
+   ========================================================================== */
 
 function setCookie(name, value) {
     document.cookie =
@@ -212,6 +228,7 @@ function selectOptionExists(selectElement, value) {
     return Array.from(selectElement.options).some((option) => option.value === value);
 }
 
+
 function saveVoicePreference() {
     setCookie(PREF_COOKIE_NAMES.voice, getVoice());
 }
@@ -236,6 +253,7 @@ function saveDifficultyPreference() {
     setCookie(PREF_COOKIE_NAMES.difficulty, dom.difficultySlider.value);
 }
 
+
 async function restorePreferencesFromCookies() {
     const savedVoice = getCookie(PREF_COOKIE_NAMES.voice);
 
@@ -243,11 +261,6 @@ async function restorePreferencesFromCookies() {
         setRadioValue("voice", savedVoice);
     }
 
-    /*
-     * Lautstärke:
-     * - wenn Cookie vorhanden: Cookie-Wert verwenden
-     * - wenn kein Cookie vorhanden: Standardwert 50 %
-     */
     const savedVolume = getCookie(PREF_COOKIE_NAMES.volume);
 
     const restoredVolume = savedVolume !== null
@@ -262,11 +275,6 @@ async function restorePreferencesFromCookies() {
     dom.volumeSlider.value = restoredVolume;
     dom.volumeValue.textContent = volumePercent();
 
-    /*
-     * Schwierigkeit:
-     * - wenn Cookie vorhanden: Cookie-Wert verwenden
-     * - wenn kein Cookie vorhanden: Standardwert -6 dB
-     */
     const savedDifficulty = getCookie(PREF_COOKIE_NAMES.difficulty);
 
     const restoredDifficulty = savedDifficulty !== null
@@ -304,6 +312,10 @@ async function restorePreferencesFromCookies() {
     }
 }
 
+/* ==========================================================================
+   Hann-Fade für Störgeräusche
+   ========================================================================== */
+
 function createHannFadeCurve(targetGain, fadeIn = true, points = 64) {
     const curve = new Float32Array(points);
 
@@ -336,25 +348,17 @@ function applyNoiseHannEnvelope(gainParam, targetGain, startTime, endTime) {
     const requestedFadeSeconds = NOISE_FADE_WINDOW_MS / 1000;
 
     /*
-     * Kleiner Sicherheitsabstand, damit Fade-In und Fade-Out
-     * niemals exakt aneinanderstoßen oder sich durch Rundung überlappen.
+     * Sicherheitsabstand, damit sich setValueCurveAtTime-Intervalle
+     * durch Browser-Rundungen nicht überlappen.
      */
     const epsilonSeconds = 0.001;
 
-    /*
-     * Der Fade darf maximal knapp die halbe Gesamtdauer einnehmen.
-     * So bleibt zwischen Fade-In und Fade-Out mindestens ein kleiner Abstand.
-     */
     const fadeSeconds = Math.min(
         requestedFadeSeconds,
         Math.max(0, (totalDuration - epsilonSeconds) / 2)
     );
 
     gainParam.cancelScheduledValues(startTime);
-
-    /*
-     * Startwert ohne zusätzliches Automation-Event direkt im Kurvenbereich.
-     */
     gainParam.value = 0;
 
     if (fadeSeconds <= 0) {
@@ -367,33 +371,17 @@ function applyNoiseHannEnvelope(gainParam, targetGain, startTime, endTime) {
     const fadeInCurve = createHannFadeCurve(targetGain, true);
     const fadeOutCurve = createHannFadeCurve(targetGain, false);
 
-    /*
-     * Wichtig:
-     * Keine setValueAtTime()-Events innerhalb oder direkt am Ende
-     * der setValueCurveAtTime()-Intervalle setzen.
-     */
     gainParam.setValueCurveAtTime(
         fadeInCurve,
         startTime,
         fadeSeconds
     );
 
-    /*
-     * Nach dem Fade-In bleibt der letzte Kurvenwert erhalten,
-     * also targetGain.
-     */
-
     gainParam.setValueCurveAtTime(
         fadeOutCurve,
         fadeOutStartTime,
         fadeSeconds
     );
-
-    /*
-     * Nach dem Fade-Out ist der letzte Kurvenwert 0.
-     * Da die Noise-Source bei endTime gestoppt wird, brauchen wir
-     * hier kein zusätzliches setValueAtTime(0, endTime).
-     */
 }
 
 /* ==========================================================================
@@ -401,54 +389,69 @@ function applyNoiseHannEnvelope(gainParam, targetGain, startTime, endTime) {
    ========================================================================== */
 
 function resetTrainingButtons() {
-    state.hasStarted = false;
     state.currentSample = null;
+    state.currentSampleWasPlayed = false;
     state.solutionVisible = false;
 
-    dom.startButton.textContent = "Start";
+    setStartButtonToStart();
+
     dom.startButton.disabled = true;
-
     dom.nextButton.disabled = true;
     dom.solutionButton.disabled = true;
 }
 
 
-function enableStartState() {
-    state.hasStarted = false;
+function enableReadyForFirstStart() {
     state.currentSample = null;
+    state.currentSampleWasPlayed = false;
     state.solutionVisible = false;
 
-    dom.startButton.textContent = "Start";
-    dom.startButton.disabled = false;
+    setStartButtonToStart();
 
+    dom.startButton.disabled = false;
     dom.nextButton.disabled = true;
     dom.solutionButton.disabled = true;
 }
 
 
-function enableTrainingState() {
-    state.hasStarted = true;
+function enableSampleLoadedButNotPlayed() {
+    state.currentSampleWasPlayed = false;
+    state.solutionVisible = false;
 
-    dom.startButton.textContent = "Wiederholen";
+    dom.startButton.textContent = START_BUTTON_TEXT;
     dom.startButton.disabled = false;
 
+    /*
+     * "Weiter" soll erst nach dem Anhören des neuen Samples
+     * wieder möglich sein.
+     */
+    dom.nextButton.disabled = true;
+    dom.solutionButton.disabled = true;
+}
+
+
+function enableAfterPlayback() {
+    state.currentSampleWasPlayed = true;
+
+    setStartButtonToRepeat();
+
+    dom.startButton.disabled = false;
     dom.nextButton.disabled = false;
     dom.solutionButton.disabled = state.solutionVisible;
 }
 
 
 function disableTrainingStateAfterFinished() {
-    state.hasStarted = false;
     state.currentSample = null;
+    state.currentSampleWasPlayed = false;
     state.solutionVisible = false;
 
-    dom.startButton.textContent = "Wiederholen";
-    dom.startButton.disabled = true;
+    setStartButtonToStart();
 
+    dom.startButton.disabled = true;
     dom.nextButton.disabled = true;
     dom.solutionButton.disabled = true;
 }
-
 
 /* ==========================================================================
    UI: Schwierigkeit und Störgeräusche
@@ -516,7 +519,6 @@ function renderNoiseOptions() {
     updateNoiseDifficultyState();
 }
 
-
 /* ==========================================================================
    UI: Listen
    ========================================================================== */
@@ -552,10 +554,8 @@ function renderListOptions() {
     }
 
     resetTrainingButtons();
-    // setInfo("Bitte eine Liste auswählen."); 
     setInfo(" ");
 }
-
 
 /* ==========================================================================
    API
@@ -584,6 +584,12 @@ async function apiPost(url, payload = {}) {
 
     const data = await response.json();
 
+    /*
+     * Wichtig:
+     * Bei /api/next kann data.ok === false mit HTTP 200 zurückkommen,
+     * wenn die Liste fertig ist. Deshalb werfen wir nur bei echtem
+     * HTTP-Fehler.
+     */
     if (!response.ok) {
         throw new Error(data.message || "Unbekannter Fehler");
     }
@@ -614,7 +620,6 @@ async function loadNoiseUrls() {
     renderNoiseOptions();
 }
 
-
 /* ==========================================================================
    Audio
    ========================================================================== */
@@ -624,7 +629,10 @@ function stopPlayback() {
         try {
             source.stop();
         } catch (error) {
-            // Quelle war eventuell bereits gestoppt.
+            /*
+             * Quelle war eventuell bereits gestoppt.
+             * Das ist unkritisch.
+             */
         }
     }
 
@@ -724,11 +732,6 @@ async function playSample(sample) {
         const difficultyDb = Number(dom.difficultySlider.value);
         const noiseTargetGain = volumeLinear() * dbToLinear(difficultyDb);
 
-        /*
-         * Wichtig:
-         * Startwert 0, damit kein Klick beim Start entsteht.
-         * Die eigentliche Lautstärke wird danach per Hann-Hüllkurve automatisiert.
-         */
         noiseGain.gain.value = 0;
 
         applyNoiseHannEnvelope(
@@ -757,7 +760,9 @@ async function playSample(sample) {
      * Ohne Störgeräusch ist das eine kürzere stille Pause.
      */
     speechSource.start(speechStartTime);
+    speechSource.stop(speechStartTime + speechBuffer.duration);
 }
+
 /* ==========================================================================
    Trainingslogik
    ========================================================================== */
@@ -775,7 +780,6 @@ async function selectList() {
     if (!filename) {
         resetTrainingButtons();
         showLogoOnly();
-        //setInfo("Bitte eine Liste auswählen.");
         setInfo(" ");
         return;
     }
@@ -786,7 +790,7 @@ async function selectList() {
             label,
         });
 
-        enableStartState();
+        enableReadyForFirstStart();
         showLogoOnly();
 
         setInfo(`${data.label} ausgewählt – ${data.count} Einträge.`);
@@ -798,67 +802,159 @@ async function selectList() {
 }
 
 
-async function nextSample() {
-    try {
-        clearSolution();
+async function loadNextSample() {
+    const data = await apiPost("/api/next", {
+        voice: getVoice(),
+    });
 
-        const data = await apiPost("/api/next", {
-            voice: getVoice(),
-        });
+    if (data.finished || data.ok === false) {
+        disableTrainingStateAfterFinished();
+        showLogoOnly();
+        setInfo(data.message || "Diese Liste ist komplett.");
 
-        if (!data.ok && data.finished) {
-            dom.startLogo.hidden = true;
-            dom.solutionText.hidden = false;
-            dom.solutionText.textContent = data.message;
-
-            disableTrainingStateAfterFinished();
-            return;
-        }
-
-        state.currentSample = data.sample;
-
-        await playSample(state.currentSample);
-
-        enableTrainingState();
-    } catch (error) {
-        setInfo(error.message);
+        return null;
     }
-}
 
-async function repeatSample() {
-    try {
-        const data = await apiPost("/api/repeat", {
-            voice: getVoice(),
-        });
+    state.currentSample = data.sample;
+    state.currentSampleWasPlayed = false;
+    state.solutionVisible = false;
 
-        state.currentSample = data.sample;
-
-        await playSample(state.currentSample);
-    } catch (error) {
-        setInfo(error.message);
-    }
+    return data.sample;
 }
 
 
-async function startTraining() {
-    await nextSample();
+async function loadRepeatSample() {
+    const data = await apiPost("/api/repeat", {
+        voice: getVoice(),
+    });
 
-    if (state.currentSample) {
-        enableTrainingState();
+    if (!data.ok) {
+        throw new Error(data.message || "Wiederholen nicht möglich.");
     }
+
+    state.currentSample = data.sample;
+
+    return data.sample;
 }
 
 
 async function startOrRepeat() {
-    if (!state.hasStarted) {
-        await startTraining();
-    } else {
-        await repeatSample();
+    if (dom.startButton.disabled) {
+        return;
+    }
+
+    try {
+        dom.startButton.disabled = true;
+        dom.solutionButton.disabled = true;
+
+        showLogoOnly();
+
+        let sample = null;
+
+        /*
+         * Fall 1:
+         * Es gibt noch kein aktuelles Sample.
+         * Dann ist das der erste Start nach Listenauswahl.
+         */
+        if (!state.currentSample) {
+            sample = await loadNextSample();
+        }
+
+        /*
+         * Fall 2:
+         * Es gibt ein Sample, aber es wurde noch nicht abgespielt.
+         * Das passiert nach Klick auf "Weiter".
+         *
+         * Wir holen es über /api/repeat erneut, damit eine eventuell
+         * inzwischen geänderte Stimme berücksichtigt wird.
+         */
+        else if (!state.currentSampleWasPlayed) {
+            sample = await loadRepeatSample();
+        }
+
+        /*
+         * Fall 3:
+         * Das Sample wurde bereits abgespielt.
+         * Dann bedeutet der Button "Wiederholen".
+         */
+        else {
+            sample = await loadRepeatSample();
+        }
+
+        if (!sample) {
+            return;
+        }
+
+        await playSample(sample);
+
+        state.currentSample = sample;
+        state.currentSampleWasPlayed = true;
+
+        enableAfterPlayback();
+
+        setInfo(" ");
+    } catch (error) {
+        dom.startButton.disabled = false;
+
+        if (state.currentSampleWasPlayed) {
+            dom.nextButton.disabled = false;
+            dom.solutionButton.disabled = state.solutionVisible;
+            setStartButtonToRepeat();
+        } else {
+            dom.nextButton.disabled = true;
+            dom.solutionButton.disabled = true;
+            setStartButtonToStart();
+        }
+
+        setInfo(error.message);
+    }
+}
+
+
+async function nextSample() {
+    if (dom.nextButton.disabled) {
+        return;
+    }
+
+    stopPlayback();
+    showLogoOnly();
+    setStartButtonToStart();
+
+    try {
+        dom.startButton.disabled = true;
+        dom.nextButton.disabled = true;
+        dom.solutionButton.disabled = true;
+
+        const sample = await loadNextSample();
+
+        if (!sample) {
+            return;
+        }
+
+        enableSampleLoadedButNotPlayed();
+
+        setInfo(" ");
+    } catch (error) {
+        /*
+         * Falls beim Laden des nächsten Samples etwas schiefgeht,
+         * darf das aktuelle Sample weiterhin wiederholt werden.
+         */
+        if (state.currentSample) {
+            enableAfterPlayback();
+        } else {
+            resetTrainingButtons();
+        }
+
+        setInfo(error.message);
     }
 }
 
 
 async function showSolution() {
+    if (dom.solutionButton.disabled) {
+        return;
+    }
+
     try {
         const data = await apiGet("/api/solution");
 
