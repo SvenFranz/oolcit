@@ -38,6 +38,8 @@ const state = {
     availableLists: [],
     availableNoises: [],
     noiseUrls: {},
+    
+    loadingCounter: 0,
 };
 
 /* ==========================================================================
@@ -65,6 +67,11 @@ const dom = {
     difficultyValue: document.getElementById("difficultyValue"),
 
     fontSizeSlider: document.getElementById("fontSizeSlider"),
+
+    app: document.querySelector(".app"),
+    trainerGrid: document.querySelector(".trainer-grid"),
+    loadingOverlay: document.getElementById("loadingOverlay"),
+    loadingText: document.getElementById("loadingText"),
 };
 
 /* ==========================================================================
@@ -171,6 +178,71 @@ function setStartButtonToRepeat() {
     dom.startButton.textContent = REPEAT_BUTTON_TEXT;
 }
 
+function setAppLoading(active, message = "Bitte warten …") {
+    if (active) {
+        state.loadingCounter += 1;
+
+        if (dom.loadingText) {
+            dom.loadingText.textContent = message;
+        }
+
+        if (dom.loadingOverlay) {
+            dom.loadingOverlay.hidden = false;
+        }
+
+        document.body.classList.add("app-loading");
+
+        if (dom.app) {
+            dom.app.setAttribute("aria-busy", "true");
+        }
+
+        /*
+         * inert verhindert auch Tastaturbedienung während des Ladens.
+         * Moderne Browser unterstützen das inzwischen gut.
+         */
+        if (dom.trainerGrid && "inert" in dom.trainerGrid) {
+            dom.trainerGrid.inert = true;
+        }
+
+        return;
+    }
+
+    state.loadingCounter = Math.max(0, state.loadingCounter - 1);
+
+    if (state.loadingCounter > 0) {
+        return;
+    }
+
+    if (dom.loadingOverlay) {
+        dom.loadingOverlay.hidden = true;
+    }
+
+    document.body.classList.remove("app-loading");
+
+    if (dom.app) {
+        dom.app.removeAttribute("aria-busy");
+    }
+
+    if (dom.trainerGrid && "inert" in dom.trainerGrid) {
+        dom.trainerGrid.inert = false;
+    }
+}
+
+
+async function withAppLoading(message, task) {
+    setAppLoading(true, message);
+
+    try {
+        return await task();
+    } finally {
+        setAppLoading(false);
+    }
+}
+
+
+function isAppLoading() {
+    return state.loadingCounter > 0;
+}
 
 /* ==========================================================================
    Cookies
@@ -785,9 +857,11 @@ async function selectList() {
     }
 
     try {
-        const data = await apiPost("/api/select-list", {
-            filename,
-            label,
+        const data = await withAppLoading("Liste wird geladen …", async () => {
+            return await apiPost("/api/select-list", {
+                filename,
+                label,
+            });
         });
 
         enableReadyForFirstStart();
@@ -839,60 +913,59 @@ async function loadRepeatSample() {
 
 
 async function startOrRepeat() {
-    if (dom.startButton.disabled) {
+    if (dom.startButton.disabled || isAppLoading()) {
         return;
     }
 
     try {
-        dom.startButton.disabled = true;
-        dom.solutionButton.disabled = true;
+        await withAppLoading("Signal wird geladen …", async () => {
+            dom.startButton.disabled = true;
+            dom.solutionButton.disabled = true;
 
-        showLogoOnly();
+            showLogoOnly();
 
-        let sample = null;
+            let sample = null;
 
-        /*
-         * Fall 1:
-         * Es gibt noch kein aktuelles Sample.
-         * Dann ist das der erste Start nach Listenauswahl.
-         */
-        if (!state.currentSample) {
-            sample = await loadNextSample();
-        }
+            /*
+             * Fall 1:
+             * Noch kein aktuelles Sample vorhanden.
+             * Dann wird beim ersten Start eines geladen.
+             */
+            if (!state.currentSample) {
+                sample = await loadNextSample();
+            }
 
-        /*
-         * Fall 2:
-         * Es gibt ein Sample, aber es wurde noch nicht abgespielt.
-         * Das passiert nach Klick auf "Weiter".
-         *
-         * Wir holen es über /api/repeat erneut, damit eine eventuell
-         * inzwischen geänderte Stimme berücksichtigt wird.
-         */
-        else if (!state.currentSampleWasPlayed) {
-            sample = await loadRepeatSample();
-        }
+            /*
+             * Fall 2:
+             * Sample vorhanden, aber noch nicht abgespielt.
+             */
+            else if (!state.currentSampleWasPlayed) {
+                sample = state.currentSample;
+            }
 
-        /*
-         * Fall 3:
-         * Das Sample wurde bereits abgespielt.
-         * Dann bedeutet der Button "Wiederholen".
-         */
-        else {
-            sample = await loadRepeatSample();
-        }
+            /*
+             * Fall 3:
+             * Sample wurde bereits abgespielt.
+             * Dann bedeutet der Button "Wiederholen".
+             */
+            else {
+                sample = await loadRepeatSample();
+            }
 
-        if (!sample) {
-            return;
-        }
+            if (!sample) {
+                return;
+            }
 
-        await playSample(sample);
+            await playSample(sample);
 
-        state.currentSample = sample;
-        state.currentSampleWasPlayed = true;
+            state.currentSample = sample;
+            state.currentSampleWasPlayed = true;
+            state.solutionVisible = false;
 
-        enableAfterPlayback();
+            enableAfterPlayback();
 
-        setInfo(" ");
+            setInfo(" ");
+        });
     } catch (error) {
         dom.startButton.disabled = false;
 
@@ -912,49 +985,37 @@ async function startOrRepeat() {
 
 
 async function nextSample() {
-    if (dom.nextButton.disabled) {
+    if (dom.nextButton.disabled || isAppLoading()) {
         return;
     }
 
-    stopPlayback();
-    showLogoOnly();
-    setInfo(" ");
-
     try {
-        dom.startButton.disabled = true;
-        dom.nextButton.disabled = true;
-        dom.solutionButton.disabled = true;
+        await withAppLoading("Nächstes Signal wird geladen …", async () => {
+            stopPlayback();
+            showLogoOnly();
+            setInfo(" ");
 
-        /*
-         * Nächstes Sample vom Backend holen.
-         */
-        const sample = await loadNextSample();
+            dom.startButton.disabled = true;
+            dom.nextButton.disabled = true;
+            dom.solutionButton.disabled = true;
 
-        if (!sample) {
-            return;
-        }
+            const sample = await loadNextSample();
 
-        /*
-         * Wichtig:
-         * Bei "Weiter" soll das neue Signal direkt einmal abgespielt werden.
-         */
-        await playSample(sample);
+            if (!sample) {
+                return;
+            }
 
-        state.currentSample = sample;
-        state.currentSampleWasPlayed = true;
-        state.solutionVisible = false;
+            await playSample(sample);
 
-        /*
-         * Nach dem direkten Abspielen bleibt der Button korrekt auf "Wiederholen".
-         */
-        enableAfterPlayback();
+            state.currentSample = sample;
+            state.currentSampleWasPlayed = true;
+            state.solutionVisible = false;
 
-        setInfo(" ");
+            enableAfterPlayback();
+
+            setInfo(" ");
+        });
     } catch (error) {
-        /*
-         * Falls beim Laden oder Abspielen etwas schiefgeht,
-         * bleibt der letzte sinnvolle Zustand erhalten.
-         */
         if (state.currentSample) {
             enableAfterPlayback();
         } else {
@@ -967,20 +1028,22 @@ async function nextSample() {
 
 
 async function showSolution() {
-    if (dom.solutionButton.disabled) {
+    if (dom.solutionButton.disabled || isAppLoading()) {
         return;
     }
 
     try {
-        const data = await apiGet("/api/solution");
+        await withAppLoading("Lösung wird geladen …", async () => {
+            const data = await apiGet("/api/solution");
 
-        if (!data.ok) {
-            throw new Error(data.message || "Keine Lösung verfügbar.");
-        }
+            if (!data.ok) {
+                throw new Error(data.message || "Keine Lösung verfügbar.");
+            }
 
-        showSolutionText(data.text);
+            showSolutionText(data.text);
 
-        dom.solutionButton.disabled = true;
+            dom.solutionButton.disabled = true;
+        });
     } catch (error) {
         setInfo(error.message);
     }
@@ -1046,19 +1109,16 @@ async function init() {
     dom.solutionText.style.fontSize = `${dom.fontSizeSlider.value}px`;
 
     try {
-        await loadLists();
+        await withAppLoading("App wird vorbereitet …", async () => {
+            await loadLists();
+            await loadNoiseUrls();
+            await restorePreferencesFromCookies();
+        });
     } catch (error) {
+        resetTrainingButtons();
+        showLogoOnly();
         setInfo(error.message);
     }
-
-    try {
-        await loadNoiseUrls();
-    } catch (error) {
-        setInfo(error.message);
-    }
-
-    await restorePreferencesFromCookies();
 }
-
 
 document.addEventListener("DOMContentLoaded", init);
