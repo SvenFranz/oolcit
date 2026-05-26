@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="de">
+
+<head>
+    <meta charset="utf-8">
+    <title>{{ title }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}?v=1">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/favicon.png') }}?v=1">
+
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/favicon.png') }}?v=1">
+</head>
+
+<body>
+    <main class="app">
+        <header class="header">
+            <h1>oOLCIT – online Oldenburger CI-Trainer</h1>
+            <p id="infoText">&nbsp;</p>
+        </header>
+
+        <section class="trainer-grid">
+            <!-- Linke Spalte -->
+            <aside class="left-column">
+                <fieldset class="panel-box">
+                    <legend>Stimme</legend>
+
+                    <label>
+                        <input type="radio" name="voice" value="female" checked>
+                        weiblich
+                    </label>
+
+                    <label>
+                        <input type="radio" name="voice" value="male">
+                        männlich
+                    </label>
+                </fieldset>
+
+                <fieldset class="panel-box">
+                    <legend>Lautstärke</legend>
+
+                    <input id="volumeSlider" type="range" min="1" max="100" step="1" value="50">
+
+                    <output id="volumeValue">50</output>
+                </fieldset>
+            </aside>
+
+            <!-- Mittlere Spalte -->
+            <section class="center-column">
+                <fieldset class="panel-box list-box">
+                    <legend>Listen</legend>
+
+                    <select id="listSelect">
+                        <option value="">Listen werden geladen …</option>
+                    </select>
+                </fieldset>
+
+                <section class="solution-panel">
+                    <div id="startLogo" class="start-logo">
+                        <img src="{{ url_for('static', filename='img/olcit-logo.png') }}"
+                            alt="OLCIT – Oldenburger CI-Trainer">
+                    </div>
+
+                    <div id="solutionText" class="solution-text" hidden></div>
+                </section>
+
+                <nav class="navigation">
+                    <button id="startButton" disabled>Start</button>
+                    <button id="nextButton" disabled>Weiter</button>
+                    <button id="solutionButton" disabled>Lösung</button>
+                </nav>
+
+                <fieldset class="panel-box">
+                    <legend>Schriftgröße der Lösung</legend>
+
+                    <input id="fontSizeSlider" type="range" min="12" max="50" step="1" value="24">
+                </fieldset>
+
+            </section>
+
+            <!-- Rechte Spalte -->
+            <aside class="right-column">
+                <fieldset id="noiseOptions" class="panel-box">
+                    <legend>Störgeräusch</legend>
+
+                    <div id="noiseTypeList" class="noise-type-list">
+                        <p class="muted">Störgeräusche werden geladen …</p>
+                    </div>
+                </fieldset>
+
+                <fieldset id="difficultyBox" class="panel-box" disabled>
+                    <legend>Schwierigkeit</legend>
+
+                    <input id="difficultySlider" type="range" min="-12" max="0" step="2" value="-6">
+
+                    <output id="difficultyValue">Leicht</output>
+                </fieldset>
+            </aside>
+        </section>
+
+        <footer class="footer">
+            Copyright 2026, Sven Franz, Jade Hochschule Wilhelmshaven/Oldenburg/Elsfleth
+            <p class="cookie-notice">
+                Hinweis: Diese Anwendung speichert lokale Einstellungen wie Stimme,
+                Lautstärke, Liste, Störgeräusch und Schwierigkeit in Cookies,
+                um sie beim nächsten Besuch wiederherzustellen.
+            </p>
+        </footer>
+    </main>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+
+</html>
