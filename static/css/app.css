@@ -265,19 +265,25 @@ button:disabled {
 }
 
 /* ==========================================================================
-   Globaler Ladezustand
+   Ladezustand im Anzeigefenster
    ========================================================================== */
 
 /*
- * Das Overlay liegt über der gesamten App und blockiert dadurch Klicks.
- * Wichtig:
- * Der Hintergrund bleibt transparent, damit sich die Farben der App
- * beim Laden nicht verändern.
+ * Das Anzeigefenster wird zum Positionierungsrahmen
+ * für den Ladebalken.
+ */
+.solution-panel {
+    position: relative;
+}
+
+/*
+ * Der Ladezustand liegt nur innerhalb des Anzeigefensters,
+ * nicht mehr über der gesamten Seite.
  */
 .loading-overlay {
-    position: fixed;
+    position: absolute;
     inset: 0;
-    z-index: 9999;
+    z-index: 20;
 
     display: flex;
     align-items: center;
@@ -288,11 +294,7 @@ button:disabled {
     background: transparent;
     backdrop-filter: none;
 
-    /*
-     * Das Overlay fängt Maus-/Touch-Eingaben ab.
-     * Dadurch ist die App gesperrt, ohne optisch abgedunkelt zu werden.
-     */
-    pointer-events: auto;
+    pointer-events: none;
 }
 
 .loading-overlay[hidden] {
@@ -300,17 +302,13 @@ button:disabled {
 }
 
 .loading-card {
-    width: min(90vw, 360px);
+    width: min(85%, 340px);
 
     border: 1px solid rgba(255, 255, 255, 0.28);
     border-radius: 0.6rem;
 
-    /*
-     * Fast deckender Hintergrund nur für die Ladebox,
-     * nicht für die ganze App.
-     */
     background: rgba(64, 112, 127, 0.96);
-    box-shadow: 0 0.8rem 2rem rgba(0, 0, 0, 0.25);
+    box-shadow: 0 0.5rem 1.4rem rgba(0, 0, 0, 0.22);
 
     padding: 1rem;
 
@@ -364,19 +362,21 @@ body.app-loading {
 }
 
 /*
- * Die App wird während des Ladens gesperrt,
- * aber NICHT optisch verändert.
+ * Die App wird während des Ladens weiterhin gesperrt,
+ * aber optisch nicht abgedunkelt.
  */
 body.app-loading .trainer-grid {
     pointer-events: none;
     user-select: none;
-
-    /*
-     * Wichtig:
-     * Keine Transparenzänderung, damit nichts blinkt
-     * und die Farben stabil bleiben.
-     */
     opacity: 1;
+}
+
+/*
+ * Der Ladebalken selbst bleibt sichtbar.
+ * Er muss keine Klicks entgegennehmen.
+ */
+body.app-loading .loading-overlay {
+    pointer-events: none;
 }
 
 /*

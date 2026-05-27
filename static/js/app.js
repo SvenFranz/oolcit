@@ -38,8 +38,20 @@ const state = {
     availableLists: [],
     availableNoises: [],
     noiseUrls: {},
-    
+
     loadingCounter: 0,
+
+    /*
+     * Cache für bereits geladene und dekodierte Audiodaten.
+     *
+     * Key:   Audio-URL
+     * Value: Promise<AudioBuffer>
+     *
+     * Wir speichern bewusst Promises, damit dieselbe Datei auch dann
+     * nur einmal geladen wird, wenn kurz hintereinander mehrere Anfragen
+     * für dieselbe URL kommen.
+     */
+    audioBufferCache: new Map(),
 };
 
 /* ==========================================================================
@@ -103,6 +115,35 @@ function getVoice() {
 function getNoiseType() {
     const selected = document.querySelector("input[name='noiseType']:checked");
     return selected ? selected.value : "none";
+}
+
+
+function getSelectedNoiseUrl() {
+    const noiseType = getNoiseType();
+
+    if (!noiseType || noiseType === "none") {
+        return null;
+    }
+
+    return state.noiseUrls[noiseType] || null;
+}
+
+
+function getSampleAudioUrl(sample) {
+    if (!sample) {
+        return null;
+    }
+
+    /*
+     * Dein Backend verwendet aktuell sample.audio_url.
+     * Die weiteren Varianten sind nur als robuste Absicherung enthalten.
+     */
+    return sample.audio_url
+        || sample.audioUrl
+        || sample.speech_url
+        || sample.speechUrl
+        || sample.url
+        || null;
 }
 
 
@@ -178,6 +219,7 @@ function setStartButtonToRepeat() {
     dom.startButton.textContent = REPEAT_BUTTON_TEXT;
 }
 
+
 function setAppLoading(active, message = "Bitte warten …") {
     if (active) {
         state.loadingCounter += 1;
@@ -198,7 +240,6 @@ function setAppLoading(active, message = "Bitte warten …") {
 
         /*
          * inert verhindert auch Tastaturbedienung während des Ladens.
-         * Moderne Browser unterstützen das inzwischen gut.
          */
         if (dom.trainerGrid && "inert" in dom.trainerGrid) {
             dom.trainerGrid.inert = true;
@@ -714,7 +755,13 @@ function stopPlayback() {
 
 async function ensureAudioContext() {
     if (!state.audioContext) {
-        state.audioContext = new AudioContext();
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+
+        if (!AudioContextClass) {
+            throw new Error("Dieser Browser unterstützt die Web Audio API nicht.");
+        }
+
+        state.audioContext = new AudioContextClass();
     }
 
     if (state.audioContext.state === "suspended") {
@@ -725,16 +772,80 @@ async function ensureAudioContext() {
 }
 
 
-async function loadAudioBuffer(url) {
-    const ctx = await ensureAudioContext();
-    const response = await fetch(url);
-
-    if (!response.ok) {
-        throw new Error(`Audiodatei konnte nicht geladen werden: ${url}`);
+function isAudioBufferCached(url) {
+    if (!url) {
+        return true;
     }
 
-    const arrayBuffer = await response.arrayBuffer();
-    return await ctx.decodeAudioData(arrayBuffer);
+    return state.audioBufferCache.has(url);
+}
+
+
+async function loadAudioBufferCached(url) {
+    if (!url) {
+        return null;
+    }
+
+    if (state.audioBufferCache.has(url)) {
+        return await state.audioBufferCache.get(url);
+    }
+
+    const promise = (async () => {
+        const ctx = await ensureAudioContext();
+
+        const response = await fetch(url, {
+            cache: "force-cache",
+        });
+
+        if (!response.ok) {
+            throw new Error(`Audiodatei konnte nicht geladen werden: ${url}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        return await ctx.decodeAudioData(arrayBuffer);
+    })();
+
+    state.audioBufferCache.set(url, promise);
+
+    try {
+        return await promise;
+    } catch (error) {
+        /*
+         * Falls das Laden oder Dekodieren fehlschlägt,
+         * entfernen wir den defekten Cache-Eintrag.
+         */
+        state.audioBufferCache.delete(url);
+        throw error;
+    }
+}
+
+
+function playbackNeedsLoading(sample) {
+    const speechUrl = getSampleAudioUrl(sample);
+    const noiseUrl = getSelectedNoiseUrl();
+
+    if (speechUrl && !isAudioBufferCached(speechUrl)) {
+        return true;
+    }
+
+    if (noiseUrl && !isAudioBufferCached(noiseUrl)) {
+        return true;
+    }
+
+    return false;
+}
+
+
+async function preloadSelectedNoiseIfNeeded() {
+    const noiseUrl = getSelectedNoiseUrl();
+
+    if (!noiseUrl || isAudioBufferCached(noiseUrl)) {
+        return;
+    }
+
+    await withAppLoading("Störgeräusch wird geladen …", async () => {
+        await loadAudioBufferCached(noiseUrl);
+    });
 }
 
 
@@ -743,7 +854,19 @@ async function playSample(sample) {
 
     const ctx = await ensureAudioContext();
 
-    const speechBuffer = await loadAudioBuffer(sample.audio_url);
+    const speechUrl = getSampleAudioUrl(sample);
+
+    if (!speechUrl) {
+        throw new Error("Für dieses Signal wurde keine Audiodatei gefunden.");
+    }
+
+    /*
+     * Wichtig:
+     * Sprachsignal wird aus dem Cache geladen.
+     * Falls es noch nicht im Cache ist, wird es genau einmal geladen
+     * und dekodiert.
+     */
+    const speechBuffer = await loadAudioBufferCached(speechUrl);
 
     const speechSource = ctx.createBufferSource();
     speechSource.buffer = speechBuffer;
@@ -756,8 +879,7 @@ async function playSample(sample) {
 
     state.activeSources.push(speechSource);
 
-    const noiseType = getNoiseType();
-    const noiseUrl = noiseType !== "none" ? state.noiseUrls[noiseType] : null;
+    const noiseUrl = getSelectedNoiseUrl();
     const hasNoise = Boolean(noiseUrl);
 
     const now = ctx.currentTime;
@@ -787,7 +909,13 @@ async function playSample(sample) {
     const blockEndTime = now + totalBlockDuration;
 
     if (hasNoise) {
-        const noiseBuffer = await loadAudioBuffer(noiseUrl);
+        /*
+         * Wichtig:
+         * Störgeräusch wird ebenfalls aus dem Cache geladen.
+         * Schwierigkeit und Lautstärke ändern nur den Gain,
+         * nicht die geladene Audiodatei.
+         */
+        const noiseBuffer = await loadAudioBufferCached(noiseUrl);
 
         const noiseSource = ctx.createBufferSource();
         noiseSource.buffer = noiseBuffer;
@@ -897,27 +1025,60 @@ async function loadNextSample() {
 }
 
 
-async function loadRepeatSample() {
-    const data = await apiPost("/api/repeat", {
-        voice: getVoice(),
-    });
-
-    if (!data.ok) {
-        throw new Error(data.message || "Wiederholen nicht möglich.");
-    }
-
-    state.currentSample = data.sample;
-
-    return data.sample;
-}
-
-
 async function startOrRepeat() {
     if (dom.startButton.disabled || isAppLoading()) {
         return;
     }
 
+    /*
+     * Wiederholen bedeutet jetzt:
+     * Kein Backend-Request.
+     * Kein /api/repeat.
+     * Kein erneutes Laden des Samples.
+     * Das aktuelle Sample wird erneut aus dem AudioBuffer-Cache abgespielt.
+     */
+    const isRepeat =
+        state.currentSample &&
+        state.currentSampleWasPlayed;
+
     try {
+        /*
+         * AudioContext möglichst unmittelbar nach dem User-Klick aktivieren.
+         * Das ist für mobile Browser wichtig.
+         */
+        await ensureAudioContext();
+
+        if (isRepeat) {
+            const repeatTask = async () => {
+                dom.startButton.disabled = true;
+                dom.solutionButton.disabled = true;
+
+                showLogoOnly();
+
+                await playSample(state.currentSample);
+
+                state.currentSampleWasPlayed = true;
+                state.solutionVisible = false;
+
+                enableAfterPlayback();
+                setInfo(" ");
+            };
+
+            /*
+             * Normalerweise ist beim Wiederholen alles bereits im Cache.
+             * Falls aber z. B. seit dem letzten Abspielen ein neues
+             * Störgeräusch gewählt wurde, kann dafür einmalig noch Laden
+             * nötig sein.
+             */
+            if (playbackNeedsLoading(state.currentSample)) {
+                await withAppLoading("Signal wird vorbereitet …", repeatTask);
+            } else {
+                await repeatTask();
+            }
+
+            return;
+        }
+
         await withAppLoading("Signal wird geladen …", async () => {
             dom.startButton.disabled = true;
             dom.solutionButton.disabled = true;
@@ -941,15 +1102,6 @@ async function startOrRepeat() {
              */
             else if (!state.currentSampleWasPlayed) {
                 sample = state.currentSample;
-            }
-
-            /*
-             * Fall 3:
-             * Sample wurde bereits abgespielt.
-             * Dann bedeutet der Button "Wiederholen".
-             */
-            else {
-                sample = await loadRepeatSample();
             }
 
             if (!sample) {
@@ -990,6 +1142,11 @@ async function nextSample() {
     }
 
     try {
+        /*
+         * AudioContext möglichst unmittelbar nach dem User-Klick aktivieren.
+         */
+        await ensureAudioContext();
+
         await withAppLoading("Nächstes Signal wird geladen …", async () => {
             stopPlayback();
             showLogoOnly();
@@ -1067,9 +1224,23 @@ function registerEventListeners() {
         input.addEventListener("change", saveVoicePreference);
     });
 
-    dom.noiseTypeList.addEventListener("change", () => {
+    dom.noiseTypeList.addEventListener("change", async () => {
         updateNoiseDifficultyState();
         saveNoisePreference();
+
+        /*
+         * Optionales Vorladen:
+         * Wenn ein Störgeräusch ausgewählt wird, laden wir es direkt einmalig.
+         * Dadurch ist beim nächsten Start/Wiederholen meist keine Wartezeit mehr nötig.
+         *
+         * Bei "ohne" passiert nichts.
+         * Bei bereits gecachter Datei passiert ebenfalls nichts.
+         */
+        try {
+            await preloadSelectedNoiseIfNeeded();
+        } catch (error) {
+            setInfo(error.message);
+        }
     });
 
     dom.volumeSlider.addEventListener("input", () => {
