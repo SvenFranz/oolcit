@@ -285,6 +285,40 @@ function isAppLoading() {
     return state.loadingCounter > 0;
 }
 
+function handleVoiceChange() {
+    saveVoicePreference();
+
+    /*
+     * Wichtig:
+     * Beim Wechsel der Stimme darf das aktuelle Sample nicht weiterverwendet
+     * werden, weil dessen audio_url zur vorherigen Stimme gehört.
+     */
+    stopPlayback();
+
+    state.currentSample = null;
+    state.currentSampleWasPlayed = false;
+    state.solutionVisible = false;
+
+    showLogoOnly();
+    setStartButtonToStart();
+
+    /*
+     * Wenn bereits eine Liste ausgewählt ist, bleibt die Liste aktiv.
+     * Der nächste Klick auf "Start" lädt aber ein neues Sample mit der
+     * neu ausgewählten Stimme.
+     */
+    if (dom.listSelect.value) {
+        dom.startButton.disabled = false;
+        dom.nextButton.disabled = true;
+        dom.solutionButton.disabled = true;
+
+        setInfo("Stimme geändert – bitte Start drücken.");
+    } else {
+        resetTrainingButtons();
+        setInfo("Bitte eine Liste auswählen.");
+    }
+}
+
 /* ==========================================================================
    Cookies
    ========================================================================== */
@@ -1221,7 +1255,7 @@ function registerEventListeners() {
     dom.solutionButton.addEventListener("click", showSolution);
 
     document.querySelectorAll("input[name='voice']").forEach((input) => {
-        input.addEventListener("change", saveVoicePreference);
+        input.addEventListener("change", handleVoiceChange);
     });
 
     dom.noiseTypeList.addEventListener("change", async () => {
