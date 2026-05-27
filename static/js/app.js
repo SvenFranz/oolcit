@@ -40,6 +40,7 @@ const state = {
     noiseUrls: {},
 
     loadingCounter: 0,
+    currentSampleNeedsVoiceRefresh: false,
 
     /*
      * Cache für bereits geladene und dekodierte Audiodaten.
@@ -289,72 +290,80 @@ function handleVoiceChange() {
     saveVoicePreference();
 
     /*
+     * Beim Wechsel der Stimme soll die aktuelle Listenposition erhalten bleiben.
+     *
      * Wichtig:
-     * Beim Wechsel der Stimme darf das aktuelle Sample nicht weiterverwendet
-     * werden, weil dessen audio_url zur vorherigen Stimme gehört.
+     * - currentSample wird NICHT gelöscht.
+     * - /api/next darf danach NICHT aufgerufen werden.
+     * - stattdessen wird beim nächsten Start /api/repeat mit der neuen Stimme genutzt.
      */
     stopPlayback();
-
-    state.currentSample = null;
-    state.currentSampleWasPlayed = false;
-    state.solutionVisible = false;
 
     showLogoOnly();
     setStartButtonToStart();
 
-    /*
-     * Wenn bereits eine Liste ausgewählt ist, bleibt die Liste aktiv.
-     * Der nächste Klick auf "Start" lädt aber ein neues Sample mit der
-     * neu ausgewählten Stimme.
-     */
-    if (dom.listSelect.value) {
+    if (!dom.listSelect.value) {
+        resetTrainingButtons();
+        setInfo("Bitte eine Liste auswählen.");
+        return;
+    }
+
+    if (state.currentSample) {
+        /*
+         * Es gibt bereits ein aktuelles Item.
+         * Genau dieses Item soll mit der neu ausgewählten Stimme
+         * erneut geladen und abgespielt werden.
+         */
+        state.currentSampleWasPlayed = false;
+        state.currentSampleNeedsVoiceRefresh = true;
+        state.solutionVisible = false;
+
         dom.startButton.disabled = false;
         dom.nextButton.disabled = true;
         dom.solutionButton.disabled = true;
 
-        setInfo("Stimme geändert – bitte Start drücken.");
-    } else {
-        resetTrainingButtons();
-        setInfo("Bitte eine Liste auswählen.");
+        setInfo("Stimme geändert – aktuelles Signal wird mit Start neu gesprochen.");
+        return;
     }
+
+    /*
+     * Falls noch kein aktuelles Sample existiert,
+     * z. B. direkt nach Auswahl einer Liste,
+     * kann Start normal das erste Signal laden.
+     */
+    state.currentSampleWasPlayed = false;
+    state.currentSampleNeedsVoiceRefresh = false;
+    state.solutionVisible = false;
+
+    dom.startButton.disabled = false;
+    dom.nextButton.disabled = true;
+    dom.solutionButton.disabled = true;
+
+    setInfo("Stimme geändert – bitte Start drücken.");
 }
 
-function handleVoiceChange() {
-    saveVoicePreference();
-
+async function loadCurrentSampleWithSelectedVoice() {
     /*
-     * Beim Wechsel der Stimme darf das aktuell gespeicherte Sample
-     * nicht weiterverwendet werden, weil dessen audio_url noch zur
-     * vorherigen Stimme gehört.
+     * Wichtig:
+     * /api/repeat soll denselben aktuellen Listeneintrag liefern,
+     * aber mit der aktuell gewählten Stimme.
      *
-     * Die ausgewählte Liste/Reihe bleibt aber aktiv.
-     * Es wird NICHT selectList() aufgerufen.
-     * Dadurch wird die Reihe nicht zurückgesetzt.
+     * Dadurch wird die Liste NICHT weitergeschaltet.
      */
-    stopPlayback();
+    const data = await apiPost("/api/repeat", {
+        voice: getVoice(),
+    });
 
-    state.currentSample = null;
+    if (!data.ok) {
+        throw new Error(data.message || "Aktuelles Signal konnte nicht mit neuer Stimme geladen werden.");
+    }
+
+    state.currentSample = data.sample;
     state.currentSampleWasPlayed = false;
+    state.currentSampleNeedsVoiceRefresh = false;
     state.solutionVisible = false;
 
-    showLogoOnly();
-    setStartButtonToStart();
-
-    if (dom.listSelect.value) {
-        /*
-         * Liste bleibt ausgewählt.
-         * Der nächste Klick auf Start ruft /api/next mit der neuen Stimme auf.
-         * Dadurch wird die Reihe normal weitergeführt.
-         */
-        dom.startButton.disabled = false;
-        dom.nextButton.disabled = true;
-        dom.solutionButton.disabled = true;
-
-        setInfo("Stimme geändert – Reihe wird mit Start fortgesetzt.");
-    } else {
-        resetTrainingButtons();
-        setInfo("Bitte eine Liste auswählen.");
-    }
+    return data.sample;
 }
 
 /* ==========================================================================
@@ -576,6 +585,7 @@ function applyNoiseHannEnvelope(gainParam, targetGain, startTime, endTime) {
 function resetTrainingButtons() {
     state.currentSample = null;
     state.currentSampleWasPlayed = false;
+    state.currentSampleNeedsVoiceRefresh = false;
     state.solutionVisible = false;
 
     setStartButtonToStart();
@@ -589,6 +599,7 @@ function resetTrainingButtons() {
 function enableReadyForFirstStart() {
     state.currentSample = null;
     state.currentSampleWasPlayed = false;
+    state.currentSampleNeedsVoiceRefresh = false;
     state.solutionVisible = false;
 
     setStartButtonToStart();
@@ -629,6 +640,7 @@ function enableAfterPlayback() {
 function disableTrainingStateAfterFinished() {
     state.currentSample = null;
     state.currentSampleWasPlayed = false;
+    state.currentSampleNeedsVoiceRefresh = false;
     state.solutionVisible = false;
 
     setStartButtonToStart();
@@ -1091,6 +1103,7 @@ async function loadNextSample() {
 
     state.currentSample = data.sample;
     state.currentSampleWasPlayed = false;
+    state.currentSampleNeedsVoiceRefresh = false;
     state.solutionVisible = false;
 
     return data.sample;
@@ -1103,15 +1116,13 @@ async function startOrRepeat() {
     }
 
     /*
-     * Wiederholen bedeutet jetzt:
-     * Kein Backend-Request.
-     * Kein /api/repeat.
-     * Kein erneutes Laden des Samples.
-     * Das aktuelle Sample wird erneut aus dem AudioBuffer-Cache abgespielt.
+     * Normales Wiederholen:
+     * Nur dann aus dem Cache wiederholen, wenn kein Stimmenwechsel aussteht.
      */
     const isRepeat =
         state.currentSample &&
-        state.currentSampleWasPlayed;
+        state.currentSampleWasPlayed &&
+        !state.currentSampleNeedsVoiceRefresh;
 
     try {
         /*
@@ -1161,15 +1172,29 @@ async function startOrRepeat() {
 
             /*
              * Fall 1:
-             * Noch kein aktuelles Sample vorhanden.
-             * Dann wird beim ersten Start eines geladen.
+             * Stimme wurde gewechselt.
+             *
+             * Dann darf NICHT /api/next aufgerufen werden,
+             * weil das die Liste weiterschalten würde.
+             *
+             * Stattdessen holen wir denselben aktuellen Eintrag
+             * mit der neu gewählten Stimme über /api/repeat.
              */
-            if (!state.currentSample) {
-                sample = await loadNextSample();
+            if (state.currentSample && state.currentSampleNeedsVoiceRefresh) {
+                sample = await loadCurrentSampleWithSelectedVoice();
             }
 
             /*
              * Fall 2:
+             * Noch kein aktuelles Sample vorhanden.
+             * Dann wird ein neues Sample geladen.
+             */
+            else if (!state.currentSample) {
+                sample = await loadNextSample();
+            }
+
+            /*
+             * Fall 3:
              * Sample vorhanden, aber noch nicht abgespielt.
              */
             else if (!state.currentSampleWasPlayed) {
@@ -1184,6 +1209,7 @@ async function startOrRepeat() {
 
             state.currentSample = sample;
             state.currentSampleWasPlayed = true;
+            state.currentSampleNeedsVoiceRefresh = false;
             state.solutionVisible = false;
 
             enableAfterPlayback();
