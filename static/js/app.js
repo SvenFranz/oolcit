@@ -319,6 +319,44 @@ function handleVoiceChange() {
     }
 }
 
+function handleVoiceChange() {
+    saveVoicePreference();
+
+    /*
+     * Beim Wechsel der Stimme darf das aktuell gespeicherte Sample
+     * nicht weiterverwendet werden, weil dessen audio_url noch zur
+     * vorherigen Stimme gehört.
+     *
+     * Die ausgewählte Liste/Reihe bleibt aber aktiv.
+     * Es wird NICHT selectList() aufgerufen.
+     * Dadurch wird die Reihe nicht zurückgesetzt.
+     */
+    stopPlayback();
+
+    state.currentSample = null;
+    state.currentSampleWasPlayed = false;
+    state.solutionVisible = false;
+
+    showLogoOnly();
+    setStartButtonToStart();
+
+    if (dom.listSelect.value) {
+        /*
+         * Liste bleibt ausgewählt.
+         * Der nächste Klick auf Start ruft /api/next mit der neuen Stimme auf.
+         * Dadurch wird die Reihe normal weitergeführt.
+         */
+        dom.startButton.disabled = false;
+        dom.nextButton.disabled = true;
+        dom.solutionButton.disabled = true;
+
+        setInfo("Stimme geändert – Reihe wird mit Start fortgesetzt.");
+    } else {
+        resetTrainingButtons();
+        setInfo("Bitte eine Liste auswählen.");
+    }
+}
+
 /* ==========================================================================
    Cookies
    ========================================================================== */
